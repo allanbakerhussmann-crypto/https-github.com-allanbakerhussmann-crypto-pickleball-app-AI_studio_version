@@ -81,6 +81,27 @@ const storage = getStorage(app);
 const functions = getFunctions(app);
 
 export const getAuth = (): Auth => authInstance;
+/**
+ * Client wrapper to call the createTeam Cloud Function.
+ * Returns { existed: boolean, teamId, team } on success.
+ */
+export const createTeam = async (opts: {
+  tournamentId: string;
+  divisionId: string;
+  playerIds: string[];
+  teamName?: string | null;
+}) => {
+  if (!functions) {
+    throw new Error('Firebase functions not initialized');
+  }
+  const { tournamentId, divisionId, playerIds, teamName } = opts;
+  const callable = httpsCallable(functions, 'createTeam');
+
+  // Call function
+  const resp = await callable({ tournamentId, divisionId, playerIds, teamName });
+  return resp.data; // { existed, teamId, team }
+};
+
 export const saveFirebaseConfig = (configJson: string) => {
     try {
         const parsed = JSON.parse(configJson);
