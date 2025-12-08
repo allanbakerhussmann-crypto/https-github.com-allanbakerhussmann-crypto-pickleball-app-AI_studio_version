@@ -47,7 +47,7 @@ import {
   disputeMatchScore,
 } from '../services/matchService';
 
-import { getScheduledQueue } from '../services/courtAllocator';
+//import { getScheduledQueue } from '../services/courtAllocator';
 
 /* ----------------- Helpers ----------------- */
 
@@ -77,14 +77,9 @@ const validateScoreForDivision = (
   const loserPoints = Math.min(score1, score2);
   const diff = winnerPoints - loserPoints;
 
-  // Winner must reach at least target points
-  if (winnerPoints < target) {
-    return `Winner must reach at least ${target} points.`;
-  }
-
-  // Winner must win by required margin
-  if (diff < winBy) {
-    return `Winner must win by at least ${winBy} points.`;
+  // Winner must reach at least target points and win by the required margin
+  if (winnerPoints < target || diff < winBy) {
+    return `Score not valid for this division. Games are to at least ${target} points and the winner must lead by at least ${winBy} points (for example ${target}-${target - winBy} or higher).`;
   }
 
   return null;
@@ -122,9 +117,10 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     'participants' | 'courts' | 'settings' | 'livecourts'
   >('livecourts');
 
-  // Local tournament phase (UI only for now)
-  const [tournamentPhase, setTournamentPhase] =
-    useState<TournamentPhase>('registration');
+  // Local override for tournament phase (UI only)
+  const [phaseOverride, setPhaseOverride] = useState<TournamentPhase | null>(
+    null
+  );
 
   // Wizard State
   const [showRegistrationWizard, setShowRegistrationWizard] = useState(false);
@@ -150,7 +146,8 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
   };
 
   // Track if the current user has already completed a registration
-  const [hasCompletedRegistration, setHasCompletedRegistration] = useState(false);
+  const [hasCompletedRegistration, setHasCompletedRegistration] =
+    useState(false);
 
   useEffect(() => {
     const loadRegistration = async () => {
@@ -171,12 +168,16 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     loadRegistration();
   }, [tournament.id, currentUser]);
 
-  // Subcollection Data
+    // Subcollection Data
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [courts, setCourts] = useState<Court[]>([]);
-  const [playersCache, setPlayersCache] = useState<Record<string, UserProfile>>({});
+  const [autoAllocateCourts, setAutoAllocateCourts] = useState(false);
+  const [playersCache, setPlayersCache] = useState<Record<string, UserProfile>>(
+    {}
+  );
+
 
   // Editable division settings (ratings, age, seeding)
   const [divisionSettings, setDivisionSettings] = useState<{
@@ -199,7 +200,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     const unsubDivs = subscribeToDivisions(tournament.id, setDivisions);
     const unsubTeams = subscribeToTeams(tournament.id, async loadedTeams => {
       setTeams(loadedTeams);
-      const allPlayerIds = Array.from(new Set(loadedTeams.flatMap(t => t.players)));
+      const allPlayerIds = Array.from(
+        new Set(loadedTeams.flatMap(t => t.players))
+      );
       const missing = allPlayerIds.filter(
         id =>
           !playersCache[id] &&
@@ -226,27 +229,28 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     };
   }, [tournament.id, playersCache]);
 
-  /* -------- Phase auto-complete (in_progress -> completed) -------- */
+  /* -------- Tournament phase derived from matches -------- */
+
+  const computedPhase: TournamentPhase = useMemo(() => {
+    if (matches.length === 0) return 'registration';
+    const anyNotCompleted = matches.some(m => m.status !== 'completed');
+    return anyNotCompleted ? 'in_progress' : 'completed';
+  }, [matches]);
 
   useEffect(() => {
-    setTournamentPhase(prev => {
-      if (
-        prev === 'in_progress' &&
-        matches.length > 0 &&
-        matches.every(m => m.status === 'completed')
-      ) {
-        return 'completed';
-      }
-      return prev;
-    });
-  }, [matches]);
+    if (computedPhase === 'completed') {
+      setPhaseOverride('completed');
+    }
+  }, [computedPhase]);
+
+  const tournamentPhase: TournamentPhase = phaseOverride ?? computedPhase;
 
   /* -------- Active Division / Tabs -------- */
 
   const [activeDivisionId, setActiveDivisionId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'details' | 'players' | 'bracket' | 'standings'>(
-    'details'
-  );
+  const [activeTab, setActiveTab] = useState<
+    'details' | 'players' | 'bracket' | 'standings'
+  >('details');
 
   const activeDivision = useMemo(
     () => divisions.find(d => d.id === activeDivisionId) || divisions[0],
@@ -264,12 +268,19 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     if (!activeDivision) return;
     setDivisionSettings({
       minRating:
-        activeDivision.minRating != null ? activeDivision.minRating.toString() : '',
+        activeDivision.minRating != null
+          ? activeDivision.minRating.toString()
+          : '',
       maxRating:
-        activeDivision.maxRating != null ? activeDivision.maxRating.toString() : '',
-      minAge: activeDivision.minAge != null ? activeDivision.minAge.toString() : '',
-      maxAge: activeDivision.maxAge != null ? activeDivision.maxAge.toString() : '',
-      seedingMethod: (activeDivision.format.seedingMethod || 'rating') as SeedingMethod,
+        activeDivision.maxRating != null
+          ? activeDivision.maxRating.toString()
+          : '',
+      minAge:
+        activeDivision.minAge != null ? activeDivision.minAge.toString() : '',
+      maxAge:
+        activeDivision.maxAge != null ? activeDivision.maxAge.toString() : '',
+      seedingMethod: (activeDivision.format.seedingMethod ||
+        'rating') as SeedingMethod,
     });
   }, [activeDivision]);
 
@@ -288,11 +299,64 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     [matches, activeDivision]
   );
 
-  /* -------- Court Allocation Data -------- */
+  // Matches in this division that need organiser attention
+  const attentionMatches = useMemo(
+    () =>
+      divisionMatches.filter(
+        m => m.status === 'pending_confirmation' || m.status === 'disputed'
+      ),
+    [divisionMatches]
+  );
 
-  const { queue: rawQueue, waitTimes } = useMemo(() => {
-    return getScheduledQueue(matches, courts.filter(c => c.active));
+    /* -------- Court Allocation Data -------- */
+  // Build a "ready" queue of matches that could start as soon as a court is free.
+  // - Only not_started / scheduled matches with no court
+  // - Skip any match where either team is already on a court (non-completed)
+  // - Ensure each team appears at most once in the queue
+
+  const { rawQueue, waitTimes } = useMemo(() => {
+    // Teams currently busy on a court (any status except completed)
+    const busy = new Set<string>();
+    matches.forEach(m => {
+      if (!m.court) return;
+      if (m.status === 'completed') return;
+      busy.add(m.teamAId);
+      busy.add(m.teamBId);
+    });
+
+    // Candidate matches that are not yet on a court
+    // Treat "scheduled" (and legacy "not_started"/missing) as "waiting to be played"
+    const candidates = matches
+      .filter(m => {
+        const status = m.status ?? 'scheduled';
+        const isWaiting =
+          status === 'scheduled' || status === 'not_started'; // keep 'not_started' for any old data
+        return isWaiting && !m.court;
+      })
+      .slice()
+      .sort((a, b) => (a.roundNumber || 1) - (b.roundNumber || 1)); // earlier rounds first
+
+
+    const queue: Match[] = [];
+    const wt: Record<string, number> = {};
+
+    candidates.forEach(m => {
+      const isBusy = busy.has(m.teamAId) || busy.has(m.teamBId);
+      if (!isBusy) {
+        queue.push(m);
+        // simple placeholder wait time; can be improved later
+        wt[m.id] = 0;
+        // once we’ve queued this match, treat those teams as "reserved"
+        busy.add(m.teamAId);
+        busy.add(m.teamBId);
+      } else {
+        wt[m.id] = 0;
+      }
+    });
+
+    return { rawQueue: queue, waitTimes: wt };
   }, [matches, courts]);
+
 
   /* -------- Helpers -------- */
 
@@ -330,7 +394,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
       let status: 'AVAILABLE' | 'ASSIGNED' | 'IN_USE' | 'OUT_OF_SERVICE';
 
-      if (!court.active) {
+      if (court.active === false) {
         status = 'OUT_OF_SERVICE';
       } else if (!currentMatch) {
         status = 'AVAILABLE';
@@ -339,6 +403,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       } else {
         status = 'ASSIGNED';
       }
+
 
       return {
         id: court.id,
@@ -412,7 +477,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
       const canCurrentUserConfirm =
         !!currentUser &&
-        ((isUserOnMatch && !!m.lastUpdatedBy && m.lastUpdatedBy !== currentUser.uid) ||
+        ((isUserOnMatch &&
+          !!m.lastUpdatedBy &&
+          m.lastUpdatedBy !== currentUser.uid) ||
           isOrganiserUser);
 
       flags[m.id] = {
@@ -464,12 +531,16 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
         team1: {
           id: m.teamAId,
           name: getTeamDisplayName(m.teamAId),
-          players: getTeamPlayers(m.teamAId).map(p => ({ name: p.displayName })),
+          players: getTeamPlayers(m.teamAId).map(p => ({
+            name: p.displayName,
+          })),
         },
         team2: {
           id: m.teamBId,
           name: getTeamDisplayName(m.teamBId),
-          players: getTeamPlayers(m.teamBId).map(p => ({ name: p.displayName })),
+          players: getTeamPlayers(m.teamBId).map(p => ({
+            name: p.displayName,
+          })),
         },
         score1: m.scoreTeamAGames[0] ?? null,
         score2: m.scoreTeamBGames[0] ?? null,
@@ -481,6 +552,86 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       })),
     [rawQueue, getTeamDisplayName, getTeamPlayers]
   );
+
+  /* -------- My matches (for current user in this division) -------- */
+
+  const myDivisionMatches = useMemo(() => {
+    if (!currentUser || !activeDivision) return [] as Match[];
+
+    const myTeamIds = teams
+      .filter(
+        t =>
+          t.divisionId === activeDivision.id &&
+          t.players.includes(currentUser.uid)
+      )
+      .map(t => t.id);
+
+    if (myTeamIds.length === 0) return [] as Match[];
+
+    return divisionMatches.filter(
+      m => myTeamIds.includes(m.teamAId) || myTeamIds.includes(m.teamBId)
+    );
+  }, [currentUser, activeDivision, teams, divisionMatches]);
+
+  const myCurrentMatch = useMemo(
+    () => myDivisionMatches.find(m => m.status === 'in_progress'),
+    [myDivisionMatches]
+  );
+
+    const myNextMatch = useMemo(() => {
+    const waiting = myDivisionMatches.filter(m => {
+      const status = m.status ?? 'scheduled';
+      return status === 'scheduled' || status === 'not_started';
+    });
+    if (waiting.length === 0) return undefined;
+    return waiting.sort((a, b) => (a.roundNumber || 1) - (b.roundNumber || 1))[0];
+  }, [myDivisionMatches]);
+
+
+  const myMatchToShow = useMemo(
+    () =>
+      myCurrentMatch ||
+      myNextMatch ||
+      myDivisionMatches.find(m => m.status === 'pending_confirmation'),
+    [myCurrentMatch, myNextMatch, myDivisionMatches]
+  );
+
+  const myMatchSummary = useMemo(() => {
+    if (!currentUser || !myMatchToShow) return null;
+
+    const match = myMatchToShow;
+
+    const teamA = teams.find(t => t.id === match.teamAId);
+    const teamB = teams.find(t => t.id === match.teamBId);
+
+    const isOnTeamA = teamA?.players?.includes(currentUser.uid);
+    const isOnTeamB = teamB?.players?.includes(currentUser.uid);
+
+    const mySideName = isOnTeamA
+      ? getTeamDisplayName(match.teamAId)
+      : getTeamDisplayName(match.teamBId);
+
+    const opponentName = isOnTeamA
+      ? getTeamDisplayName(match.teamBId)
+      : getTeamDisplayName(match.teamAId);
+
+    let statusLabel = '';
+    if (match.status === 'in_progress') statusLabel = 'In Progress';
+        else if (!match.status || match.status === 'scheduled' || match.status === 'not_started')
+      statusLabel = 'Up Next';
+
+    else if (match.status === 'pending_confirmation')
+      statusLabel = 'Awaiting Score Confirmation';
+    else if (match.status === 'disputed') statusLabel = 'Disputed Score';
+
+    return {
+      mySideName,
+      opponentName,
+      statusLabel,
+      courtName: match.court || 'TBD',
+      match,
+    };
+  }, [currentUser, myMatchToShow, teams, getTeamDisplayName]);
 
   /* -------- Actions -------- */
 
@@ -508,8 +659,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
   const handleGenerateSchedule = async () => {
     if (!activeDivision) return;
-    if (divisionTeams.length < 2)
-      return alert('Need at least 2 teams.');
+    if (divisionTeams.length < 2) return alert('Need at least 2 teams.');
 
     try {
       if (activeDivision.format.stageMode === 'single_stage') {
@@ -517,7 +667,10 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
           // Single Pool RR
           await generatePoolsSchedule(
             tournament.id,
-            { ...activeDivision, format: { ...activeDivision.format, numberOfPools: 1 } },
+            {
+              ...activeDivision,
+              format: { ...activeDivision.format, numberOfPools: 1 },
+            },
             divisionTeams,
             playersCache
           );
@@ -546,6 +699,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     }
   };
 
+  // Standings & H2H
   const { standings, h2hMatrix } = useMemo(() => {
     const stats: Record<string, StandingsEntry> = {};
     const h2h: Record<string, Record<string, number>> = {};
@@ -605,7 +759,8 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
   }, [divisionTeams, divisionMatches, getTeamDisplayName]);
 
   const handleGenerateFinals = async () => {
-    if (!activeDivision || activeDivision.format.stageMode !== 'two_stage') return;
+    if (!activeDivision || activeDivision.format.stageMode !== 'two_stage')
+      return;
     try {
       await generateFinalsFromPools(
         tournament.id,
@@ -663,11 +818,22 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
           return;
         }
 
-        await submitMatchScore(tournament.id, match, currentUser.uid, score1, score2);
+        await submitMatchScore(
+          tournament.id,
+          match,
+          currentUser.uid,
+          score1,
+          score2
+        );
       } else if (action === 'confirm') {
         await confirmMatchScore(tournament.id, match, currentUser.uid);
       } else if (action === 'dispute') {
-        await disputeMatchScore(tournament.id, match, currentUser.uid, reason);
+        await disputeMatchScore(
+          tournament.id,
+          match,
+          currentUser.uid,
+          reason
+        );
       }
     } catch (err) {
       console.error('Failed to update score', err);
@@ -722,6 +888,24 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     alert('Division settings updated');
   };
 
+  /* -------- Conflict helper (same team on multiple courts) -------- */
+
+  const findActiveConflictMatch = (match: Match) => {
+    return matches.find(m => {
+      if (m.id === match.id) return false;
+      if (!m.court) return false;
+      if (m.status === 'completed') return false;
+
+      // Same team appearing in another live/pending match
+      return (
+        m.teamAId === match.teamAId ||
+        m.teamAId === match.teamBId ||
+        m.teamBId === match.teamAId ||
+        m.teamBId === match.teamBId
+      );
+    });
+  };
+
   /* -------- Court Management -------- */
 
   const [newCourtName, setNewCourtName] = useState('');
@@ -733,17 +917,32 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
   };
 
   /**
-   * Simple "Assign" used from the old Courts tab queue
+   * Simple "Assign" used from the Courts tab queue
    * - Immediately starts the match (in_progress) on a free active court
    *   (kept so your existing Assign button keeps working)
    */
   const handleAssignCourt = async (matchId: string) => {
+    const match = matches.find(m => m.id === matchId);
+    if (!match) return;
+
+    // Check for conflict
+    const conflict = findActiveConflictMatch(match);
+    if (conflict) {
+      alert(
+        `Cannot assign this match: one of the teams is already playing or waiting on court ${conflict.court}. Finish that match first.`
+      );
+      return;
+    }
+
     const freeCourt = courts.find(
       c =>
         c.active &&
         !matches.some(m => m.status !== 'completed' && m.court === c.name)
     );
-    if (!freeCourt) return alert('No active courts available.');
+    if (!freeCourt) {
+      alert('No active courts available.');
+      return;
+    }
 
     await updateMatchScore(tournament.id, matchId, {
       status: 'in_progress',
@@ -752,12 +951,19 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     });
   };
 
-  /**
-   * Live Courts helpers
-   */
-
   // Assigns a match to a specific court, but does NOT start it yet.
   const assignMatchToCourt = async (matchId: string, courtName: string) => {
+    const match = matches.find(m => m.id === matchId);
+    if (!match) return;
+
+    const conflict = findActiveConflictMatch(match);
+    if (conflict) {
+      alert(
+        `Cannot assign this match: one of the teams is already playing or waiting on court ${conflict.court}. Finish that match first.`
+      );
+      return;
+    }
+
     await updateMatchScore(tournament.id, matchId, {
       court: courtName,
       status: 'not_started',
@@ -780,50 +986,196 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     });
   };
 
-  // When finishing a match on a court:
-  // - Mark the current match completed & free the court
-  // - Auto-assign the next waiting match (if any) to this court
-  const finishMatchOnCourt = async (courtId: string) => {
-    const court = courts.find(c => c.id === courtId);
-    if (!court) return;
+// When finishing a match on a court:
+// - Require that a score has been entered
+// - Mark the match completed & free the court
+// - Auto-assign the next waiting match (if any) to this court
+const finishMatchOnCourt = async (
+  courtId: string,
+  scoreTeamA?: number,
+  scoreTeamB?: number
+) => {
+  const court = courts.find(c => c.id === courtId);
+  if (!court) return;
 
-    const currentMatch = matches.find(
-      m => m.court === court.name && m.status !== 'completed'
+  const currentMatch = matches.find(
+    m => m.court === court.name && m.status !== 'completed'
+  );
+  if (!currentMatch) {
+    alert('No active match found on this court.');
+    return;
+  }
+
+  const division =
+    divisions.find(d => d.id === currentMatch.divisionId) || null;
+
+  const existingHasScores =
+    Array.isArray(currentMatch.scoreTeamAGames) &&
+    currentMatch.scoreTeamAGames.length > 0 &&
+    Array.isArray(currentMatch.scoreTeamBGames) &&
+    currentMatch.scoreTeamBGames.length > 0;
+
+  const inlineHasScores =
+    typeof scoreTeamA === 'number' &&
+    !Number.isNaN(scoreTeamA) &&
+    typeof scoreTeamB === 'number' &&
+    !Number.isNaN(scoreTeamB);
+
+  // If there are no scores recorded anywhere, require inline scores.
+  if (!existingHasScores && !inlineHasScores) {
+    alert('Please enter scores for both teams before finishing this match.');
+    return;
+  }
+
+  // When using the inline scores, validate them against the division rules.
+  if (!existingHasScores && inlineHasScores && division) {
+    const validationError = validateScoreForDivision(
+      scoreTeamA as number,
+      scoreTeamB as number,
+      division
     );
-    if (!currentMatch) return;
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+  }
 
-    // 1) Finish current match
-    await updateMatchScore(tournament.id, currentMatch.id, {
-      status: 'completed',
-      endTime: Date.now(),
-      court: '',
-    });
+  const updates: Partial<Match> = {
+    status: 'completed',
+    endTime: Date.now(),
+    court: '',
+  };
 
-    // 2) Find next waiting match (prefer same division, earliest round)
-    const nextSameDivision = matches
+  // If scores were not already stored on the match, write the inline ones.
+  if (!existingHasScores && inlineHasScores) {
+    const sA = scoreTeamA as number;
+    const sB = scoreTeamB as number;
+
+    updates.scoreTeamAGames = [sA];
+    updates.scoreTeamBGames = [sB];
+    updates.winnerTeamId =
+      sA > sB ? currentMatch.teamAId : currentMatch.teamBId;
+  }
+
+  await updateMatchScore(tournament.id, currentMatch.id, updates);
+
+  // Find next waiting match (prefer same division, earliest round)
+  const nextSameDivision = matches
+    .filter(
+      m =>
+        (m.status === 'not_started' ||
+          m.status === 'scheduled' ||
+          !m.status) &&
+        !m.court &&
+        m.divisionId === currentMatch.divisionId
+    )
+    .sort((a, b) => (a.roundNumber || 1) - (b.roundNumber || 1))[0];
+
+  const nextAnyDivision =
+    nextSameDivision ||
+    matches
       .filter(
         m =>
-          m.status === 'not_started' &&
-          !m.court &&
-          m.divisionId === currentMatch.divisionId
+          (m.status === 'not_started' ||
+            m.status === 'scheduled' ||
+            !m.status) &&
+          !m.court
       )
       .sort((a, b) => (a.roundNumber || 1) - (b.roundNumber || 1))[0];
 
-    const nextAnyDivision =
-      nextSameDivision ||
-      matches
-        .filter(m => m.status === 'not_started' && !m.court)
-        .sort((a, b) => (a.roundNumber || 1) - (b.roundNumber || 1))[0];
+  if (nextAnyDivision) {
+    await assignMatchToCourt(nextAnyDivision.id, court.name);
+  }
+};
+;
 
-    if (nextAnyDivision) {
-      await assignMatchToCourt(nextAnyDivision.id, court.name);
-    }
+
+
+  // Helper: list of team IDs that are currently busy on a court
+  const getBusyTeamIds = () => {
+    const busy = new Set<string>();
+    matches.forEach(m => {
+      if (!m.court) return;
+      if (m.status === 'completed') return;
+      busy.add(m.teamAId);
+      busy.add(m.teamBId);
+    });
+    return busy;
   };
+
+  // Auto-fill all free courts with the best next matches (no conflicts)
+  const autoAssignFreeCourts = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+
+    const freeCourts = courts.filter(
+      c =>
+        c.active !== false &&
+        !matches.some(m => m.court === c.name && m.status !== 'completed')
+    );
+
+    if (freeCourts.length === 0) {
+      if (!silent) {
+        alert('No free courts available to auto-assign.');
+      }
+      return;
+    }
+
+    if (rawQueue.length === 0) {
+      if (!silent) {
+        alert('No waiting matches available for auto-assignment.');
+      }
+      return;
+    }
+
+    // Start with the teams that are already busy on courts
+    const busy = getBusyTeamIds();
+    const updates: Promise<any>[] = [];
+    let queueIndex = 0;
+
+    for (const court of freeCourts) {
+      let matchToAssign: Match | undefined;
+
+      // Walk through the ready queue and find the next match
+      // whose teams are not already used in this auto-fill pass.
+      while (queueIndex < rawQueue.length && !matchToAssign) {
+        const candidate = rawQueue[queueIndex++];
+
+        if (!busy.has(candidate.teamAId) && !busy.has(candidate.teamBId)) {
+          matchToAssign = candidate;
+          busy.add(candidate.teamAId);
+          busy.add(candidate.teamBId);
+        }
+      }
+
+      if (!matchToAssign) break;
+
+      updates.push(
+        updateMatchScore(tournament.id, matchToAssign.id, {
+          court: court.name,
+          status: 'scheduled', // match is scheduled on a court, not yet played
+        })
+      );
+
+    }
+
+    if (updates.length === 0) {
+      if (!silent) {
+        alert(
+          'All waiting matches either conflict with players already on court or have already been assigned.'
+        );
+      }
+      return;
+    }
+
+    await Promise.all(updates);
+  };
+
+
 
   /* -------- Tournament phase helpers (UI) -------- */
 
   const handleStartTournament = () => {
-    setTournamentPhase('in_progress');
+    setPhaseOverride('in_progress');
   };
 
   const tournamentPhaseLabel =
@@ -839,6 +1191,40 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       : tournamentPhase === 'in_progress'
       ? 'bg-green-900 text-green-300'
       : 'bg-blue-900 text-blue-300';
+
+  /* -------- Player Start Match (from sidebar) -------- */
+
+  const handlePlayerStartMatch = async (matchId: string) => {
+    const match = matches.find(m => m.id === matchId);
+    if (!match) return;
+
+    if (!currentUser) {
+      alert('You must be logged in to start the match.');
+      return;
+    }
+
+    const teamA = teams.find(t => t.id === match.teamAId);
+    const teamB = teams.find(t => t.id === match.teamBId);
+
+    const isOnTeam =
+      teamA?.players?.includes(currentUser.uid) ||
+      teamB?.players?.includes(currentUser.uid);
+
+    if (!isOnTeam && !isOrganizer) {
+      alert('Only players in this match (or organisers) can start the match.');
+      return;
+    }
+
+    if (!match.court) {
+      alert('This match has not been assigned to a court yet.');
+      return;
+    }
+
+    await updateMatchScore(tournament.id, matchId, {
+      status: 'in_progress',
+      startTime: Date.now(),
+    });
+  };
 
   if (!activeDivision)
     return <div className="p-8 text-center">Loading...</div>;
@@ -953,7 +1339,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
                 <button
                   onClick={() => setAdminTab('courts')}
                   className={`px-3 py-1 rounded ${
-                    adminTab === 'courts' ? 'bg-gray-600 text-white' : 'text-gray-400'
+                    adminTab === 'courts'
+                      ? 'bg-gray-600 text-white'
+                      : 'text-gray-400'
                   }`}
                 >
                   Courts
@@ -1009,6 +1397,70 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Matches that need organiser attention */}
+              {attentionMatches.length > 0 && (
+                <div className="bg-gray-900 p-4 rounded border border-red-700/70">
+                  <h4 className="text-white font-bold mb-3">
+                    Matches Needing Attention
+                  </h4>
+                  <p className="text-xs text-gray-400 mb-3">
+                    These matches are either disputed or waiting for score
+                    confirmation. You can resolve them from the public{' '}
+                    <span className="font-semibold">Details</span> or{' '}
+                    <span className="font-semibold">Bracket</span> tabs by
+                    entering or confirming the correct score.
+                  </p>
+
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {attentionMatches.map(m => {
+                      const teamAName = getTeamDisplayName(m.teamAId);
+                      const teamBName = getTeamDisplayName(m.teamBId);
+                      const label =
+                        m.status === 'pending_confirmation'
+                          ? 'Pending confirmation'
+                          : 'Disputed';
+
+                      return (
+                        <div
+                          key={m.id}
+                          className="flex justify-between items-center bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs"
+                        >
+                          <div>
+                            <div className="text-gray-100 font-semibold">
+                              {teamAName}{' '}
+                              <span className="text-gray-500">vs</span>{' '}
+                              {teamBName}
+                            </div>
+                            <div className="text-[11px] text-gray-400">
+                              {m.stage || `Round ${m.roundNumber || 1}`}
+                              {m.court ? ` • Court ${m.court}` : ''}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                                m.status === 'disputed'
+                                  ? 'bg-red-600 text-white'
+                                  : 'bg-amber-400 text-gray-900'
+                              }`}
+                            >
+                              {label}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('details')}
+                              className="text-[10px] text-blue-300 hover:text-blue-200 underline"
+                            >
+                              Go to schedule
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1021,12 +1473,6 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
                   value={newCourtName}
                   onChange={e => setNewCourtName(e.target.value)}
                 />
-                <button
-                  onClick={handleAddCourt}
-                  className="bg-green-600 text-white px-4 py-2 rounded"
-                >
-                  Add
-                </button>
               </div>
 
               <div className="grid gap-2">
@@ -1069,7 +1515,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
               {/* Queue Monitor */}
               <div className="mt-8 pt-4 border-t border-gray-700">
-                <h4 className="text-white font-bold mb-2">Pending Match Queue</h4>
+                <h4 className="text-white font-bold mb-2">
+                  Pending Match Queue
+                </h4>
                 {queue.length === 0 ? (
                   <p className="text-gray-500">No pending matches.</p>
                 ) : (
@@ -1308,7 +1756,56 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
           )}
 
           {adminTab === 'livecourts' && (
-            <div className="mt-6">
+            <div className="mt-6 space-y-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-white">
+                    Court Allocation
+                  </h3>
+                  <div className="inline-flex rounded-full bg-gray-900 p-1 border border-gray-700">
+                    <button
+                      type="button"
+                      onClick={() => setAutoAllocateCourts(false)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                        !autoAllocateCourts
+                          ? 'bg-gray-100 text-gray-900'
+                          : 'text-gray-300'
+                      }`}
+                    >
+                      Manually allocate courts
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAutoAllocateCourts(true)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                        autoAllocateCourts
+                          ? 'bg-green-500 text-gray-900'
+                          : 'text-gray-300'
+                      }`}
+                    >
+                      Auto-allocate courts
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!autoAllocateCourts && (
+                    <button
+                      type="button"
+                      onClick={() => autoAssignFreeCourts()}
+                      className="px-3 py-1 rounded text-xs font-semibold bg-green-600 hover:bg-green-500 text-white"
+                    >
+                      Auto-fill free courts
+                    </button>
+                  )}
+                  {autoAllocateCourts && (
+                    <span className="text-[11px] text-gray-400">
+                      Auto-allocation is ON – matches will be placed on free courts automatically.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+
               <CourtAllocation
                 courts={courtViewModels}
                 matches={courtMatchModels}
@@ -1320,10 +1817,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
                 onStartMatchOnCourt={async courtId => {
                   await startMatchOnCourt(courtId);
                 }}
-                onFinishMatchOnCourt={async courtId => {
-                  await finishMatchOnCourt(courtId);
-                }}
+                onFinishMatchOnCourt={finishMatchOnCourt}
               />
+
             </div>
           )}
         </div>
@@ -1458,6 +1954,63 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
           {/* Sidebar */}
           <div>
+            {/* Your Match – BIG and FIRST */}
+            {currentUser && myMatchSummary && (
+              <div className="bg-gray-800 p-6 rounded border border-green-600 mb-4">
+                <h3 className="text-base font-bold text-green-400 mb-3">
+                  Your Match
+                </h3>
+
+                <div className="text-xs text-gray-300 mb-2">
+                  {myMatchSummary.statusLabel}
+                </div>
+
+                <div className="text-lg text-white font-semibold mb-1">
+                  {myMatchSummary.mySideName}
+                </div>
+                <div className="text-xs text-gray-400 mb-1">vs</div>
+                <div className="text-lg text-white font-semibold mb-3">
+                  {myMatchSummary.opponentName}
+                </div>
+
+                <div className="text-sm text-gray-100 mb-3">
+                  Go to{' '}
+                  <span className="font-bold">
+                    Court {myMatchSummary.courtName}
+                  </span>
+                </div>
+
+                {(!myMatchSummary.match.status ||
+                  myMatchSummary.match.status === 'scheduled' ||
+                  myMatchSummary.match.status === 'not_started') &&
+                  myMatchSummary.match.court && (
+                    <button
+
+                      onClick={() =>
+                        handlePlayerStartMatch(myMatchSummary.match.id)
+                      }
+                      className="w-full bg-green-600 hover:bg-green-500 text-white text-sm font-bold py-3 rounded shadow-md"
+                    >
+                      Start Match
+                    </button>
+                  )}
+
+                {myMatchSummary.match.status === 'in_progress' && (
+                  <div className="text-[11px] text-gray-400 mt-2">
+                    Match in progress. Enter scores from the schedule when
+                    finished.
+                  </div>
+                )}
+
+                {myMatchSummary.match.status === 'pending_confirmation' && (
+                  <div className="text-[11px] text-yellow-300 mt-2">
+                    Scores pending confirmation.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Registration / Tournament Status Card */}
             <div className="bg-gray-800 p-6 rounded border border-gray-700">
               {tournamentPhase === 'registration' ? (
                 <button
@@ -1471,13 +2024,18 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
               ) : (
                 <button
                   disabled
-                  className="w-full bg-gray-600 text-white font-bold py-3 rounded shadow opacity-70 cursor-not-allowed"
+                  className={`w-full text-white font-bold py-3 rounded shadow opacity-80 cursor-not-allowed ${
+                    tournamentPhase === 'in_progress'
+                      ? 'bg-blue-700'
+                      : 'bg-gray-700'
+                  }`}
                 >
-                  {tournamentPhase === 'in_progress'
-                    ? 'Tournament In Progress'
-                    : 'Tournament Completed'}
+                  {tournamentPhase === 'completed'
+                    ? 'Tournament Completed'
+                    : 'Tournament In Progress'}
                 </button>
               )}
+
               <div className="mt-4 text-xs text-gray-400 space-y-2">
                 <p>
                   <strong>Format:</strong>{' '}

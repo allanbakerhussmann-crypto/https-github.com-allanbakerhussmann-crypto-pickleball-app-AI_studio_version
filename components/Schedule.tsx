@@ -34,10 +34,13 @@ export const Schedule: React.FC<ScheduleProps> = ({
     courts
       .filter(c => c.active)
       .forEach(c => {
-        // Use match.court string to find if a match is assigned to this court name
+        // Any non-completed match assigned to this court (waiting or playing)
         const matchOnCourt = matches.find(
-          m => m.status === 'in_progress' && (m as any).court === c.name
+          m =>
+            m.status !== 'completed' &&
+            (m as any).court === c.name
         );
+
 
         if (matchOnCourt) {
           active.push({ court: c, match: matchOnCourt });
@@ -48,26 +51,36 @@ export const Schedule: React.FC<ScheduleProps> = ({
     return active;
   }, [courts, matches]);
 
-  // Player Notification
+      // Player Notification
   const myNextMatch = useMemo(() => {
     if (!currentUser) return null;
 
-    // Is user in a match on court?
-    const onCourt = matches.find(
-      m =>
-        m.status === 'in_progress' &&
-        (m.team1.players.some(p => p.name === currentUser.displayName) ||
-          m.team2.players.some(p => p.name === currentUser.displayName))
-    );
-    if (onCourt) {
+    // 1) Match assigned to a court for this player, but NOT started yet
+    const assignedWaiting = matches.find(m => {
+      const status = m.status ?? 'scheduled';
+      const isWaiting =
+        status === 'scheduled' || status === 'not_started';
+
+      return (
+        isWaiting &&
+        (m as any).court &&
+        (
+          m.team1.players.some(p => p.name === currentUser.displayName) ||
+          m.team2.players.some(p => p.name === currentUser.displayName)
+        )
+      );
+    });
+
+
+    if (assignedWaiting) {
       return {
         type: 'now' as const,
-        match: onCourt,
-        court: (onCourt as any).court,
+        match: assignedWaiting,
+        court: (assignedWaiting as any).court,
       };
     }
 
-    // Is user in queue?
+    // 2) Otherwise, are they in the queue (no court yet)?
     const upNext = queue.find(
       m =>
         m.team1.players.some(p => p.name === currentUser.displayName) ||
@@ -83,6 +96,8 @@ export const Schedule: React.FC<ScheduleProps> = ({
 
     return null;
   }, [currentUser, matches, queue, waitTimes]);
+
+
 
   return (
     <div className="space-y-6">
@@ -100,7 +115,7 @@ export const Schedule: React.FC<ScheduleProps> = ({
           </h3>
           <p className="text-gray-200">
             {myNextMatch.type === 'now'
-              ? `Go to ${
+              ? `Go to Court ${
                   myNextMatch.court || 'Assigned Court'
                 } immediately vs ${
                   myNextMatch.match.team1.players.some(
@@ -117,6 +132,7 @@ export const Schedule: React.FC<ScheduleProps> = ({
                     : myNextMatch.match.team1.name
                 }`}
           </p>
+
         </div>
       )}
 
@@ -160,8 +176,15 @@ export const Schedule: React.FC<ScheduleProps> = ({
                       <div className="text-xs text-gray-500 mt-1">
                         {match.status === 'in_progress'
                           ? 'Playing'
+                          : match.status === 'not_started' || match.status === 'scheduled'
+                          ? 'Waiting to start'
+                          : match.status === 'pending_confirmation'
+                          ? 'Awaiting score confirmation'
+                          : match.status === 'disputed'
+                          ? 'Score disputed'
                           : 'Finishing...'}
                       </div>
+
                     </div>
                   ) : (
                     <div className="text-xs text-gray-500 italic">Open</div>
@@ -215,20 +238,31 @@ export const Schedule: React.FC<ScheduleProps> = ({
             <p>Generate a schedule after adding teams.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {matches.map((match, index) => (
-              <MatchCard
-                key={match.id}
-                match={match}
-                matchNumber={index + 1}
-                onUpdateScore={onUpdateScore}
-                isVerified={isVerified}
-                // NEW: per-user flags coming from TournamentManager via MatchDisplay
-                isWaitingOnYou={(match as any).isWaitingOnYou}
-                canCurrentUserConfirm={(match as any).canCurrentUserConfirm}
-              />
-            ))}
+                    <div className="space-y-3">
+            {matches.map((match, index) => {
+              // Is the logged-in user a player in this match?
+              const isPlayerInThisMatch =
+                !!currentUser &&
+                (
+                  match.team1.players.some(p => p.name === currentUser.displayName) ||
+                  match.team2.players.some(p => p.name === currentUser.displayName)
+                );
+
+              return (
+                <MatchCard
+                  key={match.id}
+                  match={match}
+                  matchNumber={index + 1}
+                  onUpdateScore={onUpdateScore}
+                  isVerified={isVerified}
+                  isWaitingOnYou={(match as any).isWaitingOnYou}
+                  canCurrentUserConfirm={(match as any).canCurrentUserConfirm}
+                  canCurrentUserEdit={isPlayerInThisMatch}
+                />
+              );
+            })}
           </div>
+
         )}
       </div>
     </div>
