@@ -29,8 +29,7 @@ import {
   updateCourt,
   deleteCourt,
   batchCreateMatches,
-  createTeam,
-  deleteTeam,
+  createTeamServer,              // <- renamed wrapper
   getUsersByIds,
   saveTournament,
   generatePoolsSchedule,
@@ -245,8 +244,8 @@ const handleAddTeam = useCallback(
       throw new Error('No active division selected');
     }
     try {
-      // createTeam is the client wrapper that calls the Cloud Function
-      const res = await createTeam({
+      // createTeamServer calls the server-side Cloud Function
+      const res = await createTeamServer({
         tournamentId: tournament.id,
         divisionId: activeDivision.id,
         playerIds,

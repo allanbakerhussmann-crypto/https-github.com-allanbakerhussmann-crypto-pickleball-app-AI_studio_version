@@ -85,7 +85,12 @@ export const getAuth = (): Auth => authInstance;
  * Client wrapper to call the createTeam Cloud Function.
  * Returns { existed: boolean, teamId, team } on success.
  */
-export const createTeam = async (opts: {
+/**
+ * Client wrapper to call the createTeam Cloud Function.
+ * Renamed to createTeamServer to avoid name collisions.
+ * Returns { existed: boolean, teamId, team } on success.
+ */
+export const createTeamServer = async (opts: {
   tournamentId: string;
   divisionId: string;
   playerIds: string[];
@@ -101,6 +106,7 @@ export const createTeam = async (opts: {
   const resp = await callable({ tournamentId, divisionId, playerIds, teamName });
   return resp.data; // { existed, teamId, team }
 };
+
 
 export const saveFirebaseConfig = (configJson: string) => {
     try {
