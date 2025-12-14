@@ -1,8 +1,5 @@
 
 import React, { useState, useEffect } from 'react';
-import type { Board, Match } from '../types';
-import { useAuth } from '../contexts/AuthContext';
-import { MatchLineupEditor } from './MatchLineupEditor';
 
 /**
  * Basic structures for displaying a match.
@@ -28,8 +25,6 @@ export interface MatchDisplay {
   // Optional flags added in TournamentManager
   isWaitingOnYou?: boolean;
   canCurrentUserConfirm?: boolean;
-  // Team League Boards
-  boards?: Board[];
 }
 
 interface MatchCardProps {
@@ -58,17 +53,8 @@ export const MatchCard: React.FC<MatchCardProps> = ({
   canCurrentUserConfirm,
   canCurrentUserEdit,
 }) => {
-  const { currentUser } = useAuth();
   const [score1, setScore1] = useState<number | ''>(match.score1 ?? '');
   const [score2, setScore2] = useState<number | ''>(match.score2 ?? '');
-  
-  // Board scores state
-  const [expanded, setExpanded] = useState(false);
-  const [boardScores, setBoardScores] = useState<Record<number, { s1: string, s2: string }>>({});
-
-  // Lineup Editor State
-  const [showLineupEditor, setShowLineupEditor] = useState(false);
-  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
 
   // If the match scores change from outside (e.g. other player / organiser),
   // keep local inputs in sync.
@@ -80,35 +66,23 @@ export const MatchCard: React.FC<MatchCardProps> = ({
   const isCompleted = match.status === 'completed';
   const isPendingConfirmation = match.status === 'pending_confirmation';
   const isDisputed = match.status === 'disputed';
-  const isTeamMatch = !!match.boards && match.boards.length > 0;
+  const isInProgress = match.status === 'in_progress';
 
-  const handleSubmit = (boardIdx?: number) => {
+  const handleSubmit = () => {
     if (!isVerified) {
-      console.warn('Only verified organisers/players can submit scores.');
+      alert('Only verified organisers/players can submit scores.');
       return;
     }
     if (!canCurrentUserEdit) {
-      console.warn('Only players in this match can enter scores.');
+      alert('Only players in this match can enter scores.');
       return;
     }
 
-    let s1, s2;
-    // Handle Board Score
-    if (boardIdx !== undefined && isTeamMatch) {
-        const bScore = boardScores[boardIdx];
-        if (!bScore) return;
-        s1 = parseInt(bScore.s1, 10);
-        s2 = parseInt(bScore.s2, 10);
-        // We append the board index to the match ID for the parent to handle
-        onUpdateScore(`${match.id}:${boardIdx}`, s1, s2, 'submit');
-        return;
-    }
-
-    // Handle Normal Match Score
-    s1 = typeof score1 === 'string' ? parseInt(score1, 10) : score1;
-    s2 = typeof score2 === 'string' ? parseInt(score2, 10) : score2;
+    const s1 = typeof score1 === 'string' ? parseInt(score1, 10) : score1;
+    const s2 = typeof score2 === 'string' ? parseInt(score2, 10) : score2;
 
     if (Number.isNaN(s1) || Number.isNaN(s2)) {
+      alert('Please enter scores for both sides.');
       return;
     }
 
@@ -124,270 +98,140 @@ export const MatchCard: React.FC<MatchCardProps> = ({
 
   const handleDispute = () => {
     if (!canCurrentUserConfirm) return;
-    const reason = 'Disputed by user';
+    const reason = window.prompt(
+      'Describe what is wrong with this score (optional):'
+    );
     const s1 = typeof score1 === 'string' ? parseInt(score1, 10) : score1;
     const s2 = typeof score2 === 'string' ? parseInt(score2, 10) : score2;
-    onUpdateScore(match.id, s1 || 0, s2 || 0, 'dispute', reason);
+    onUpdateScore(match.id, s1 || 0, s2 || 0, 'dispute', reason || undefined);
   };
 
-  const canSetLineup = canCurrentUserEdit && isTeamMatch && !isCompleted; 
-
-  const statusLabel =
-    match.status === 'not_started'
-      ? 'Not Started'
-      : match.status === 'in_progress'
-      ? 'In Progress'
-      : match.status === 'completed'
-      ? 'Completed'
-      : match.status === 'pending_confirmation'
-      ? 'Pending Confirmation'
-      : match.status === 'disputed'
-      ? 'Disputed'
-      : match.status;
-
-  const statusColor =
-    match.status === 'in_progress'
-      ? 'text-blue-400'
-      : match.status === 'completed'
-      ? 'text-green-400'
-      : match.status === 'pending_confirmation'
-      ? 'text-yellow-300'
-      : match.status === 'disputed'
-      ? 'text-red-300'
-      : 'text-gray-400';
-
   const showEditableInputs =
-  !isCompleted && canCurrentUserEdit && isVerified && match.status === 'in_progress' && !isTeamMatch;
+  !isCompleted && canCurrentUserEdit && isVerified && match.status === 'in_progress';
+
+  const t1Winner = match.score1 !== null && match.score2 !== null && match.score1 > match.score2;
+  const t2Winner = match.score1 !== null && match.score2 !== null && match.score2 > match.score1;
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 flex flex-col gap-3 min-w-0 relative">
-      {/* Lineup Editor Modal */}
-      {showLineupEditor && editingTeamId && (
-          <MatchLineupEditor 
-            match={match as any} 
-            teamId={editingTeamId} 
-            onClose={() => setShowLineupEditor(false)} 
-          />
-      )}
-
-      {/* Header line: Match # / Round / Court / Status */}
-      <div className="flex justify-between items-center text-xs text-gray-400">
-        <div>
-          <span className="font-semibold text-gray-200">
-            Match #{matchNumber}
-          </span>
-          {match.roundNumber && (
-            <span className="ml-2">
-              • Round {match.roundNumber}
-            </span>
-          )}
-          {match.courtName && (
-            <span className="ml-2">
-              • Court {match.courtName}
-            </span>
-          )}
-        </div>
-        <div className={`font-semibold ${statusColor}`}>{statusLabel}</div>
-      </div>
-
-      {/* Teams + scores (Aggregate or Single) */}
-      <div className="flex justify-between items-center gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-white truncate">
-            {match.team1.name}
-          </div>
-          <div className="text-xs text-gray-500 truncate">
-            {match.team1.players.map(p => p.name).join(' / ')}
-          </div>
-          {canSetLineup && (
-              <button 
-                onClick={() => { setEditingTeamId(match.team1.id); setShowLineupEditor(true); }}
-                className="text-[10px] text-blue-400 hover:text-blue-300 underline mt-1"
-              >
-                  Set Lineup
-              </button>
-          )}
-        </div>
-
-        {/* Score inputs (or read-only display) */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="flex flex-col items-center">
-            {showEditableInputs ? (
-              <input
-                type="number"
-                value={score1}
-                onChange={e =>
-                  setScore1(e.target.value === '' ? '' : Number(e.target.value))
-                }
-                className="w-12 bg-gray-800 text-white text-center text-sm rounded border border-gray-600 focus:outline-none focus:border-green-500"
-              />
-            ) : (
-              <div className="w-8 text-center text-white text-xl font-bold">
-                {match.score1 ?? '-'}
-              </div>
-            )}
+    <div className={`rounded-xl border relative overflow-hidden transition-all shadow-md ${
+        isInProgress ? 'bg-gray-800 border-green-500/50 shadow-green-900/20' : 
+        isCompleted ? 'bg-gray-900 border-gray-800 opacity-90' : 
+        'bg-gray-800 border-gray-700'
+    }`}>
+      
+      {/* Live Status Indicator Strip */}
+      {isInProgress && <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-green-400 to-emerald-600 animate-pulse z-10"></div>}
+      
+      <div className="p-3 pl-4">
+          {/* Header */}
+          <div className="flex justify-between items-center mb-3">
+            <div className="flex items-center gap-2">
+                <span className="bg-gray-700 text-gray-300 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">M{matchNumber}</span>
+                {match.roundNumber && <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Rd {match.roundNumber}</span>}
+                {match.courtName && <span className="text-[10px] text-blue-400 uppercase font-bold tracking-wider bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/30">{match.courtName}</span>}
+            </div>
+            
+            <div>
+                {isInProgress ? <span className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded font-bold uppercase animate-pulse shadow-sm shadow-green-900/50">Live</span> :
+                 isCompleted ? <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Final</span> :
+                 isPendingConfirmation ? <span className="text-[10px] bg-yellow-600 text-white px-2 py-0.5 rounded font-bold uppercase shadow-sm">Confirm</span> :
+                 match.status === 'scheduled' ? <span className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Scheduled</span> : 
+                 <span className="text-[10px] text-gray-500 uppercase tracking-wider">{match.status.replace('_', ' ')}</span>}
+            </div>
           </div>
 
-          <div className="text-xs text-gray-400">–</div>
-
-          <div className="flex flex-col items-center">
-            {showEditableInputs ? (
-              <input
-                type="number"
-                value={score2}
-                onChange={e =>
-                  setScore2(e.target.value === '' ? '' : Number(e.target.value))
-                }
-                className="w-12 bg-gray-800 text-white text-center text-sm rounded border border-gray-600 focus:outline-none focus:border-green-500"
-              />
-            ) : (
-              <div className="w-8 text-center text-white text-xl font-bold">
-                {match.score2 ?? '-'}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 text-right min-w-0">
-          <div className="text-sm font-semibold text-white truncate">
-            {match.team2.name}
-          </div>
-          <div className="text-xs text-gray-500 truncate">
-            {match.team2.players.map(p => p.name).join(' / ')}
-          </div>
-          {canSetLineup && (
-              <button 
-                onClick={() => { setEditingTeamId(match.team2.id); setShowLineupEditor(true); }}
-                className="text-[10px] text-blue-400 hover:text-blue-300 underline mt-1"
-              >
-                  Set Lineup
-              </button>
-          )}
-        </div>
-      </div>
-
-      {/* Team Match Boards */}
-      {isTeamMatch && (
-          <div className="mt-2 border-t border-gray-800 pt-2">
-              <button 
-                onClick={() => setExpanded(!expanded)}
-                className="w-full flex items-center justify-between text-xs text-gray-400 hover:text-white bg-gray-800/50 p-1.5 rounded"
-              >
-                  <span className="font-bold">{match.boards?.length} Lines (Boards)</span>
-                  <svg className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-              </button>
-              
-              {expanded && (
-                  <div className="mt-2 space-y-2">
-                      {match.boards?.map((board, idx) => {
-                          const bComplete = board.status === 'completed';
-                          const canEditBoard = canCurrentUserEdit && !bComplete;
-                          const bScoreA = board.scoreTeamAGames?.[0];
-                          const bScoreB = board.scoreTeamBGames?.[0];
-                          
-                          // Display lineup names if available
-                          const playersA = board.teamAPlayers?.map(p => p.name).join('/') || 'TBD';
-                          const playersB = board.teamBPlayers?.map(p => p.name).join('/') || 'TBD';
-
-                          return (
-                              <div key={idx} className="bg-gray-800/50 p-2 rounded text-xs border border-gray-800">
-                                  <div className="flex justify-between items-center mb-1">
-                                      <span className="text-green-400 font-bold uppercase text-[10px]">{board.boardType.replace('_', ' ')}</span>
-                                      <div className="flex items-center gap-2">
-                                          {canEditBoard ? (
-                                              <>
-                                                  <input 
-                                                    className="w-8 bg-gray-700 text-center rounded border border-gray-600 text-white"
-                                                    placeholder="-"
-                                                    value={boardScores[idx]?.s1 || ''}
-                                                    onChange={e => setBoardScores({...boardScores, [idx]: { ...boardScores[idx], s1: e.target.value }})}
-                                                  />
-                                                  <span className="text-gray-500">-</span>
-                                                  <input 
-                                                    className="w-8 bg-gray-700 text-center rounded border border-gray-600 text-white"
-                                                    placeholder="-"
-                                                    value={boardScores[idx]?.s2 || ''}
-                                                    onChange={e => setBoardScores({...boardScores, [idx]: { ...boardScores[idx], s2: e.target.value }})}
-                                                  />
-                                                  <button onClick={() => handleSubmit(idx)} className="ml-1 text-green-400 hover:text-green-300">✓</button>
-                                              </>
-                                          ) : (
-                                              <span className="font-bold text-white">
-                                                  {bScoreA !== undefined ? bScoreA : '-'} : {bScoreB !== undefined ? bScoreB : '-'}
-                                              </span>
-                                          )}
-                                      </div>
-                                  </div>
-                                  <div className="flex justify-between text-gray-400 text-[10px]">
-                                      <span className="truncate max-w-[40%]">{playersA}</span>
-                                      <span className="text-gray-600">vs</span>
-                                      <span className="truncate max-w-[40%] text-right">{playersB}</span>
-                                  </div>
-                              </div>
-                          );
-                      })}
+          {/* Teams and Scores Container */}
+          <div className="flex flex-col gap-1.5">
+              {/* Team 1 Row */}
+              <div className={`flex items-center justify-between p-2.5 rounded-lg border transition-colors ${t1Winner ? 'bg-green-900/20 border-green-500/30 shadow-inner' : 'bg-gray-900/50 border-gray-700/50'}`}>
+                  <div className="min-w-0 flex-1 pr-2">
+                      <div className={`font-bold text-sm truncate ${t1Winner ? 'text-green-400' : 'text-gray-200'}`}>{match.team1.name}</div>
+                      <div className="text-[10px] text-gray-500 truncate mt-0.5 font-medium">{match.team1.players.map(p => p.name).join(' / ')}</div>
                   </div>
-              )}
+                  <div className="flex-shrink-0">
+                      {showEditableInputs ? (
+                          <input
+                            type="tel"
+                            value={score1}
+                            onChange={e => setScore1(e.target.value === '' ? '' : Number(e.target.value))}
+                            className="w-10 h-9 bg-gray-800 text-center text-white font-mono font-bold text-lg focus:outline-none focus:ring-2 focus:ring-green-500 rounded border border-gray-600"
+                            placeholder="-"
+                        />
+                      ) : (
+                          <div className={`w-9 h-9 flex items-center justify-center font-mono font-bold text-lg rounded-md ${t1Winner ? 'bg-green-600 text-white shadow-lg' : 'text-gray-400 bg-gray-800 border border-gray-700'}`}>
+                              {match.score1 ?? '-'}
+                          </div>
+                      )}
+                  </div>
+              </div>
+
+              {/* Team 2 Row */}
+              <div className={`flex items-center justify-between p-2.5 rounded-lg border transition-colors ${t2Winner ? 'bg-green-900/20 border-green-500/30 shadow-inner' : 'bg-gray-900/50 border-gray-700/50'}`}>
+                  <div className="min-w-0 flex-1 pr-2">
+                      <div className={`font-bold text-sm truncate ${t2Winner ? 'text-green-400' : 'text-gray-200'}`}>{match.team2.name}</div>
+                      <div className="text-[10px] text-gray-500 truncate mt-0.5 font-medium">{match.team2.players.map(p => p.name).join(' / ')}</div>
+                  </div>
+                  <div className="flex-shrink-0">
+                      {showEditableInputs ? (
+                          <input
+                            type="tel"
+                            value={score2}
+                            onChange={e => setScore2(e.target.value === '' ? '' : Number(e.target.value))}
+                            className="w-10 h-9 bg-gray-800 text-center text-white font-mono font-bold text-lg focus:outline-none focus:ring-2 focus:ring-green-500 rounded border border-gray-600"
+                            placeholder="-"
+                        />
+                      ) : (
+                          <div className={`w-9 h-9 flex items-center justify-center font-mono font-bold text-lg rounded-md ${t2Winner ? 'bg-green-600 text-white shadow-lg' : 'text-gray-400 bg-gray-800 border border-gray-700'}`}>
+                              {match.score2 ?? '-'}
+                          </div>
+                      )}
+                  </div>
+              </div>
           </div>
-      )}
 
-      {/* Info + Actions */}
-      <div className="flex justify-between items-center mt-1 text-xs">
-        <div className="text-gray-400 truncate mr-2">
-          {isWaitingOnYou && (
-            <span className="text-yellow-300 font-semibold">
-              Waiting for your confirmation
-            </span>
+          {/* Action Bar */}
+          {(showEditableInputs || (isPendingConfirmation && canCurrentUserConfirm) || isDisputed) && (
+              <div className="mt-3 pt-2 border-t border-gray-700/50 flex justify-end gap-2">
+                  {showEditableInputs && (
+                        <button
+                        onClick={handleSubmit}
+                        className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-green-600 hover:bg-green-500 text-white shadow-lg transition-transform active:scale-95 uppercase tracking-wide"
+                        >
+                        Submit Score
+                        </button>
+                  )}
+
+                  {isPendingConfirmation && canCurrentUserConfirm && (
+                        <div className="flex gap-2 w-full">
+                            <button
+                                onClick={handleDispute}
+                                className="flex-1 px-3 py-2 rounded-lg text-xs font-bold bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-800 uppercase tracking-wide"
+                            >
+                                Dispute
+                            </button>
+                            <button
+                                onClick={handleConfirm}
+                                className="flex-1 px-3 py-2 rounded-lg text-xs font-bold bg-green-600 hover:bg-green-500 text-white shadow-lg animate-pulse uppercase tracking-wide"
+                            >
+                                Confirm
+                            </button>
+                        </div>
+                  )}
+                  
+                  {isDisputed && (
+                      <div className="w-full bg-red-900/20 text-red-400 text-xs p-2 rounded border border-red-900/50 text-center font-bold">
+                          ⚠️ Disputed - Reviewing
+                      </div>
+                  )}
+              </div>
           )}
+          
+          {/* Waiting on opponent message */}
           {!isWaitingOnYou && isPendingConfirmation && (
-            <span className="text-gray-400">
-              Waiting for opponent confirmation
-            </span>
+              <div className="mt-2 text-[10px] text-center text-gray-500 italic bg-gray-900/30 py-1 rounded border border-gray-800">
+                  Waiting for opponent confirmation...
+              </div>
           )}
-          {isDisputed && (
-            <span className="text-red-300">
-              Score disputed – organiser review needed
-            </span>
-          )}
-          {!isCompleted && !isPendingConfirmation && !isDisputed && !isWaitingOnYou && (
-            <span className="text-gray-500">
-              {showEditableInputs
-                ? 'Enter final score.'
-                : isTeamMatch ? 'Set lineups & score boards.' : 'Scores view only.'}
-            </span>
-          )}
-        </div>
-
-        <div className="flex gap-2 flex-shrink-0">
-          {/* Submit scores */}
-          {showEditableInputs && (
-            <button
-              onClick={() => handleSubmit()}
-              className="px-3 py-1 rounded text-xs font-semibold bg-green-600 hover:bg-green-500 text-white"
-            >
-              Submit Score
-            </button>
-          )}
-
-
-          {/* Confirm / Dispute */}
-          {isPendingConfirmation && canCurrentUserConfirm && (
-            <>
-              <button
-                onClick={handleConfirm}
-                className="px-3 py-1 rounded text-xs font-semibold bg-green-600 hover:bg-green-500 text-white"
-              >
-                Confirm
-              </button>
-              <button
-                onClick={handleDispute}
-                className="px-3 py-1 rounded text-xs font-semibold bg-red-600 hover:bg-red-500 text-white"
-              >
-                Dispute
-              </button>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );

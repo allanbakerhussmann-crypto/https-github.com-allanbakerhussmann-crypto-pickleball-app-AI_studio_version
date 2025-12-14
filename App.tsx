@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header'; 
+import { BottomNav } from './components/BottomNav';
 import { Profile } from './components/Profile';
 import { TournamentManager } from './components/TournamentManager';
 import { TournamentDashboard } from './components/TournamentDashboard';
@@ -13,10 +14,6 @@ import { PlayerDirectory } from './components/PlayerDirectory';
 import { PartnerInvites } from './components/PartnerInvites';
 import { TournamentEventSelection } from './components/registration/TournamentEventSelection';
 import { AdminUsersPage } from './components/AdminUsersPage';
-import { CompetitionDashboard } from './components/CompetitionDashboard';
-import { CreateCompetition } from './components/CreateCompetition';
-import { CompetitionManager } from './components/CompetitionManager';
-import { DevTools } from './components/DevTools';
 import type { Tournament, PartnerInvite, UserProfile } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { LoginModal } from './components/auth/LoginModal';
@@ -34,8 +31,6 @@ import {
 } from './services/firebase';
 import { PickleballDirectorLogo } from './components/icons/PickleballDirectorLogo';
 import { PickleballIcon } from './components/icons/PickleballIcon';
-import { FEATURE_FLAGS } from './config/featureFlags';
-import { HelpPage } from './components/HelpPage';
 
 const VerificationBanner: React.FC = () => {
     const { resendVerificationEmail, reloadUser } = useAuth();
@@ -47,7 +42,7 @@ const VerificationBanner: React.FC = () => {
         try {
             await resendVerificationEmail();
             setMessage('Email sent! If the link is not clickable, please copy/paste it.');
-        } catch (error: any) {
+        } catch (error) {
             setMessage('Failed to send verification email.');
             console.error(error);
         }
@@ -58,7 +53,7 @@ const VerificationBanner: React.FC = () => {
         setMessage('');
         try {
             await reloadUser();
-        } catch (error: any) {
+        } catch (error) {
             setMessage('Error checking status. Please try again.');
             console.error(error);
         } finally {
@@ -164,7 +159,6 @@ const App: React.FC = () => {
     const [view, setView] = useState<string>('dashboard');
     const [activeTournamentId, setActiveTournamentId] = useState<string | null>(null);
     const [activeClubId, setActiveClubId] = useState<string | null>(null);
-    const [activeCompetitionId, setActiveCompetitionId] = useState<string | null>(null);
     
     // Wizard auto-open state
     const [wizardProps, setWizardProps] = useState<{ isOpen: boolean; mode?: 'full'|'waiver_only'; divisionId?: string } | null>(null);
@@ -226,7 +220,7 @@ const App: React.FC = () => {
                     .map(i => i.inviterId)
                     .filter(id => id && !usersById[id])
                 )
-            ) as string[];
+            );
             if (missingIds.length === 0) return;
             
             const profiles = await Promise.all(missingIds.map(id => getUserProfile(id)));
@@ -260,16 +254,18 @@ const App: React.FC = () => {
             setActiveTournamentId(newTournament.id);
             setView('tournaments'); 
             await saveTournament(newTournament);
-        } catch (e: any) {
+        } catch (e) {
             console.error("Failed to create tournament", e);
+            alert("Failed to save tournament. Please check your connection.");
         }
     };
 
     const handleUpdateTournament = async (updatedTournament: Tournament) => {
         try {
             await saveTournament(updatedTournament);
-        } catch (e: any) {
+        } catch (e) {
             console.error("Failed to update tournament", e);
+            alert("Failed to save changes. Please check your connection.");
         }
     };
 
@@ -279,19 +275,13 @@ const App: React.FC = () => {
     };
 
     const handleNavigate = (newView: string) => {
-        // Feature Flag Guards
-        if (newView === 'leagues' && !FEATURE_FLAGS.ENABLE_LEAGUES) return;
-        if (newView === 'teamLeagues' && !FEATURE_FLAGS.ENABLE_TEAM_LEAGUES) return;
-
         // Security check for organizer-only views
-        if ((newView === 'createTournament' || newView === 'createLeague') && !isOrganizer) return;
+        if (newView === 'createTournament' && !isOrganizer) return;
         if (newView === 'adminUsers' && !isAppAdmin) return;
-        if (newView === 'devTools' && !isAppAdmin) return;
         
         setView(newView);
         setActiveTournamentId(null);
         setActiveClubId(null);
-        setActiveCompetitionId(null);
         setWizardProps(null);
     };
 
@@ -319,13 +309,10 @@ const App: React.FC = () => {
         try {
             const result = await respondToPartnerInvite(invite, 'accepted');
             if (result && currentUser) {
-                // Explicit cast to 'any' to ensure properties are accessible
-                // The result is actually { tournamentId, divisionId }
-                const r = result as any;
-                await ensureRegistrationForUser(r.tournamentId, currentUser.uid, r.divisionId);
-                handleAcceptInvite(r.tournamentId, r.divisionId);
+                await ensureRegistrationForUser(result.tournamentId, currentUser.uid, result.divisionId);
+                handleAcceptInvite(result.tournamentId, result.divisionId);
             }
-        } catch (e: any) {
+        } catch (e) {
             console.error("Accept invite failed", e);
         }
     };
@@ -346,7 +333,7 @@ const App: React.FC = () => {
     // -- Main Authenticated Layout --
     return (
         <div className="min-h-screen bg-gray-900 flex flex-col font-sans text-gray-100 relative w-full overflow-x-hidden">
-            {/* Navigation Header */}
+            {/* Desktop Navigation Header */}
             <Header 
                 activeView={view}
                 onNavigate={handleNavigate}
@@ -356,6 +343,9 @@ const App: React.FC = () => {
                 userProfile={userProfile}
                 onAcceptInvite={handleAcceptInvite}
             />
+
+            {/* Mobile Bottom Navigation */}
+            <BottomNav activeView={view} onNavigate={handleNavigate} />
 
             {/* Partner Invite Popup */}
             {pendingInvites.length > 0 && invitePopupVisible && (
@@ -431,8 +421,8 @@ const App: React.FC = () => {
             {/* Verification Banner */}
             {currentUser && !currentUser.emailVerified && <VerificationBanner />}
 
-            {/* Main Content Area */}
-            <main className="flex-grow p-4 md:p-8 overflow-y-auto w-full">
+            {/* Main Content Area - Added pb-24 for bottom nav clearance on mobile */}
+            <main className="flex-grow p-4 md:p-8 pb-24 md:pb-8 overflow-y-auto w-full">
                 <div className="container mx-auto">
                     {isConfigModalOpen && <FirebaseConfigModal onSave={handleSaveConfig} />}
 
@@ -486,8 +476,6 @@ const App: React.FC = () => {
                         <Profile onBack={() => setView('dashboard')} />
                     ) : view === 'adminUsers' && isAppAdmin ? (
                         <AdminUsersPage onBack={() => setView('dashboard')} />
-                    ) : view === 'devTools' && isAppAdmin ? (
-                        <DevTools onBack={() => setView('dashboard')} />
                     ) : view === 'tournaments' ? (
                         <TournamentDashboard 
                             tournaments={tournaments}
@@ -507,24 +495,32 @@ const App: React.FC = () => {
                     ) : view === 'invites' ? (
                         <PartnerInvites
                             onAcceptInvites={(tournamentId, divisionIds) => {
+                            // Move to the "choose events for this tournament" screen
                             setEventSelectionTournamentId(tournamentId);
                             setEventSelectionPreselectedDivisionIds(divisionIds);
                             setView('tournamentEvents');
                             }}
                             onCompleteWithoutSelection={() => setView('dashboard')}
                         />
-                    ) : view === 'tournamentEvents' && eventSelectionTournamentId ? (
+                        ) : view === 'tournamentEvents' && eventSelectionTournamentId ? (
                         <TournamentEventSelection
                             tournamentId={eventSelectionTournamentId}
                             preselectedDivisionIds={eventSelectionPreselectedDivisionIds}
-                            onBack={() => setView('invites')}
+                            onBack={() => {
+                            // Go back to the invite summary screen
+                            setView('invites');
+                            }}
                             onContinue={(selectedDivisionIds) => {
-                                if (selectedDivisionIds.length > 0) {
-                                    handleAcceptInvite(eventSelectionTournamentId, selectedDivisionIds[0]);
-                                }
+                            // 🔗 IMPORTANT:
+                            // Here we hand off to your existing registration / waiver flow.
+                            if (selectedDivisionIds.length > 0) {
+                                // Existing logic – you should already have something like this:
+                                handleAcceptInvite(eventSelectionTournamentId, selectedDivisionIds[0]);
+                            }
                             }}
                         />
-                    ) : view === 'myResults' ? (
+                        ) : view === 'myResults' ? (
+
                         <PlaceholderView 
                             title="My Results" 
                             icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>}
@@ -537,34 +533,17 @@ const App: React.FC = () => {
                             message="View recent match scores and tournament outcomes here soon." 
                             onBack={() => setView('dashboard')}
                         />
-                    ) : view === 'leagues' && FEATURE_FLAGS.ENABLE_LEAGUES ? (
-                        <CompetitionDashboard 
-                            type="league" 
-                            onCreateClick={() => setView('createLeague')}
-                            onSelect={(id) => { setActiveCompetitionId(id); setView('competitionManager'); }}
+                    ) : view === 'leagues' ? (
+                        <PlaceholderView 
+                            title="Leagues" 
+                            message="Join ladder leagues and season-long competitions." 
+                            onBack={() => setView('dashboard')}
                         />
-                    ) : view === 'createLeague' && FEATURE_FLAGS.ENABLE_LEAGUES ? (
-                        <CreateCompetition 
-                            onCancel={() => setView('leagues')} 
-                            onCreate={() => setView('leagues')}
-                            initialType="league"
-                        />
-                    ) : view === 'competitionManager' && activeCompetitionId ? (
-                        <CompetitionManager 
-                            competitionId={activeCompetitionId}
-                            onBack={() => { setActiveCompetitionId(null); setView('leagues'); }}
-                        />
-                    ) : view === 'teamLeagues' && FEATURE_FLAGS.ENABLE_TEAM_LEAGUES ? (
-                        <CompetitionDashboard 
-                            type="team_league" 
-                            onCreateClick={() => setView('createTeamLeague')}
-                            onSelect={(id) => { setActiveCompetitionId(id); setView('competitionManager'); }}
-                        />
-                    ) : view === 'createTeamLeague' && FEATURE_FLAGS.ENABLE_TEAM_LEAGUES ? (
-                        <CreateCompetition 
-                            onCancel={() => setView('teamLeagues')} 
-                            onCreate={() => setView('teamLeagues')}
-                            initialType="team_league"
+                    ) : view === 'teamLeagues' ? (
+                        <PlaceholderView 
+                            title="Team Leagues" 
+                            message="Manage team rosters and league fixtures." 
+                            onBack={() => setView('dashboard')}
                         />
                     ) : view === 'clubs' ? (
                         <ClubsList 
@@ -574,16 +553,14 @@ const App: React.FC = () => {
                         />
                     ) : view === 'players' ? (
                         <PlayerDirectory onBack={() => setView('dashboard')} />
-                    ) : view === 'help' ? (
-                        <HelpPage onBack={() => setView('dashboard')} />
-                    ) : view === 'myLeagues' && FEATURE_FLAGS.ENABLE_LEAGUES ? (
+                    ) : view === 'myLeagues' ? (
                         <PlaceholderView 
                             title="My Leagues" 
                             icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>}
                             message="Join ladder leagues and season-long competitions." 
                             onBack={() => setView('dashboard')}
                         />
-                    ) : view === 'myTeamLeagues' && FEATURE_FLAGS.ENABLE_TEAM_LEAGUES ? (
+                    ) : view === 'myTeamLeagues' ? (
                         <PlaceholderView 
                             title="My Team Leagues" 
                             icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>}
@@ -612,7 +589,7 @@ const App: React.FC = () => {
                 </div>
             </main>
             
-            <footer className="p-6 text-center border-t border-gray-800 text-gray-600 text-xs bg-gray-900">
+            <footer className="p-6 pb-28 md:pb-6 text-center border-t border-gray-800 text-gray-600 text-xs bg-gray-900 hidden md:block">
                 <div className="flex justify-center gap-4 mb-2">
                     <button onClick={() => setConfigModalOpen(true)} className="hover:text-gray-400">
                             {hasCustomConfig() ? 'Database Settings' : 'Connect Database'}

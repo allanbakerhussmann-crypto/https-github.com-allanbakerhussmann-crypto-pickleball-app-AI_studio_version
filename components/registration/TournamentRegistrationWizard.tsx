@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import type { Tournament, Registration, UserProfile, Division, Team } from '../../types';
+import type { Tournament, TournamentRegistration, UserProfile, Division, Team } from '../../types';
 import {
     getRegistration,
     saveRegistration,
@@ -64,9 +63,9 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
 }) => {
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(true);
-    const [regData, setRegData] = useState<Registration | null>(null);
+    const [regData, setRegData] = useState<TournamentRegistration | null>(null);
     const [divisions, setDivisions] = useState<Division[]>([]);
-    const [partnerDetails, setPartnerDetails] = useState<Registration['partnerDetails']>({});
+    const [partnerDetails, setPartnerDetails] = useState<TournamentRegistration['partnerDetails']>({});
     const [existingTeamsByDivision, setExistingTeamsByDivision] = useState<Record<string, Team>>({});
     const [error, setError] = useState<string | null>(null);
     
@@ -79,7 +78,7 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
         const unsub = subscribeToDivisions(tournament.id, setDivisions);
 
         const loadExisting = async () => {
-            const teams = await getUserTeamsForTournament(tournament.id, userProfile.id, 'tournament');
+            const teams = await getUserTeamsForTournament(tournament.id, userProfile.id);
             const map: Record<string, Team> = {};
             teams.forEach(t => { map[t.divisionId] = t; });
             setExistingTeamsByDivision(map);
@@ -110,7 +109,7 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
         return () => unsub();
     }, [tournament.id, userProfile.id, initialDivisionId]);
 
-    const handleSave = async (updates: Partial<Registration>) => {
+    const handleSave = async (updates: Partial<TournamentRegistration>) => {
         if (!regData) return;
         const updated = { ...regData, ...updates };
         setRegData(updated);
@@ -143,7 +142,7 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
             });
 
             // Re-fetch to be safe
-            const teams = await getUserTeamsForTournament(tournament.id, userProfile.id, 'tournament');
+            const teams = await getUserTeamsForTournament(tournament.id, userProfile.id);
             const map: Record<string, Team> = {};
             teams.forEach(t => { map[t.divisionId] = t; });
             setExistingTeamsByDivision(map);
@@ -173,7 +172,7 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
             
             // If user is already in a full team for this division, they don't need to select a partner
             const existingTeam = existingTeamsByDivision[div.id];
-            if (existingTeam && existingTeam.players && existingTeam.players.length >= 2) continue;
+            if (existingTeam && existingTeam.players.length >= 2) continue;
 
             const details = partnerDetails?.[divId];
             if (!details) {
@@ -210,8 +209,8 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
 
         setLoading(true);
         try {
-            const payload: Registration = {
-                ...(regData as Registration),
+            const payload: TournamentRegistration = {
+                ...(regData as TournamentRegistration),
                 partnerDetails: isWaiverOnly ? (regData.partnerDetails || {}) : (partnerDetails || {}),
             };
             await finalizeRegistration(payload, tournament, userProfile);
@@ -350,8 +349,7 @@ export const TournamentRegistrationWizard: React.FC<WizardProps> = ({
                         {step === 2 && (
                             <>
                                 <DoublesPartnerStep
-                                    eventId={tournament.id}
-                                    eventContext="tournament"
+                                    tournament={tournament}
                                     divisions={divisions}
                                     selectedDivisionIds={regData.selectedEventIds}
                                     userProfile={userProfile}

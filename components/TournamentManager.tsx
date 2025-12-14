@@ -27,8 +27,7 @@ import {
   updateMatchScore,
   generatePoolsSchedule,
   generateBracketSchedule,
-  generateFinalsFromPools,
-  saveStandings
+  generateFinalsFromPools
 } from '../services/firebase';
 import { 
   submitMatchScore, 
@@ -184,10 +183,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
   /* -------- Fetch missing player profiles when teams change -------- */
   useEffect(() => {
-    // Explicitly cast to string[] to resolve 'unknown' type error
-    const allPlayerIds = Array.from(new Set(teams.flatMap(t => t.players || []))) as string[];
+    const allPlayerIds = Array.from(new Set(teams.flatMap(t => t.players || [])));
     const missing = allPlayerIds.filter(
-      (id: string) => !playersCache[id] && !id.startsWith('invite_') && !id.startsWith('tbd')
+      id => !playersCache[id] && !id.startsWith('invite_') && !id.startsWith('tbd')
     );
     if (missing.length === 0) return;
 
@@ -218,14 +216,21 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
         throw new Error('No active division selected');
       }
       try {
-        await createTeamServer({
+        const res = await createTeamServer({
           tournamentId: tournament.id,
           divisionId: activeDivision.id,
           playerIds,
           teamName: name || null,
         });
 
-        console.info('Team created via transaction');
+        // Cast unknown response to expected shape
+        const data = res as { existed: boolean; teamId: string };
+
+        if (data?.existed) {
+          console.info('Team already existed:', data.teamId);
+        } else {
+          console.info('Team created:', data.teamId);
+        }
       } catch (err) {
         console.error('Failed to add team', err);
         throw err;
@@ -612,10 +617,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
   const handleGenerateSchedule = async () => {
     if (!activeDivision) return;
-    if (divisionTeams.length < 2) {
-      console.warn('Need at least 2 teams.');
-      return;
-    }
+    if (divisionTeams.length < 2) return alert('Need at least 2 teams.');
 
     try {
       if (activeDivision.format.stageMode === 'single_stage') {
@@ -649,9 +651,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
           playersCache
         );
       }
-      console.info('Schedule Generated!');
+      alert('Schedule Generated!');
     } catch (e: any) {
-      console.error('Error: ' + e.message);
+      alert('Error: ' + e.message);
     }
   };
 
@@ -714,14 +716,6 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     return { standings: Object.values(stats), h2hMatrix: h2h };
   }, [divisionTeams, divisionMatches, getTeamDisplayName]);
 
-  // EFFECT: Auto-save standings whenever they change (e.g. after a match completes)
-  useEffect(() => {
-      if (standings.length > 0 && activeDivision) {
-          // Debounce could be good here, but for now simple check
-          saveStandings(tournament.id, activeDivision.id, standings).catch(console.error);
-      }
-  }, [standings, tournament.id, activeDivision]);
-
   const handleGenerateFinals = async () => {
     if (!activeDivision || activeDivision.format.stageMode !== 'two_stage')
       return;
@@ -733,9 +727,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
         divisionTeams,
         playersCache
       );
-      console.info('Finals Bracket Generated!');
+      alert('Finals Bracket Generated!');
     } catch (e: any) {
-      console.error('Error: ' + e.message);
+      alert('Error: ' + e.message);
     }
   };
 
@@ -750,7 +744,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     if (!match) return;
 
     if (!currentUser) {
-      console.warn('You must be logged in to report scores.');
+      alert('You must be logged in to report scores.');
       return;
     }
 
@@ -764,13 +758,13 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     const isPlayerInMatch = isOnTeamA || isOnTeamB;
 
     if (!isPlayerInMatch && !isOrganizer) {
-      console.warn('Only players in this match (or organisers) can enter scores.');
+      alert('Only players in this match (or organisers) can enter scores.');
       return;
     }
 
     const division = divisions.find(d => d.id === match.divisionId);
     if (!division) {
-      console.error('Could not find division for this match.');
+      alert('Could not find division for this match.');
       return;
     }
 
@@ -778,7 +772,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       if (action === 'submit') {
         const error = validateScoreForDivision(score1, score2, division);
         if (error) {
-          console.warn(error);
+          alert(error);
           return;
         }
 
@@ -801,6 +795,9 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       }
     } catch (err) {
       console.error('Failed to update score', err);
+      alert(
+        'There was a problem saving the score. Please try again or ask the organiser to help.'
+      );
     }
   };
 
@@ -811,6 +808,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       await saveTournament(tournament, [updatedDiv]);
     } catch (e) {
       console.error('Failed to update division', e);
+      alert('Failed to save settings.');
     }
   };
 
@@ -845,7 +843,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       },
     });
 
-    console.info('Division settings updated');
+    alert('Division settings updated');
   };
 
   /* -------- Conflict helper (same team on multiple courts) -------- */
@@ -887,7 +885,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     // Check for conflict
     const conflict = findActiveConflictMatch(match);
     if (conflict) {
-      console.warn(
+      alert(
         `Cannot assign this match: one of the teams is already playing or waiting on court ${conflict.court}. Finish that match first.`
       );
       return;
@@ -899,7 +897,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
         !matches.some(m => m.status !== 'completed' && m.court === c.name)
     );
     if (!freeCourt) {
-      console.warn('No active courts available.');
+      alert('No active courts available.');
       return;
     }
 
@@ -917,7 +915,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
     const conflict = findActiveConflictMatch(match);
     if (conflict) {
-      console.warn(
+      alert(
         `Cannot assign this match: one of the teams is already playing or waiting on court ${conflict.court}. Finish that match first.`
       );
       return;
@@ -958,7 +956,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       m => m.court === court.name && m.status !== 'completed'
     );
     if (!currentMatch) {
-      console.warn('No active match found on this court.');
+      alert('No active match found on this court.');
       return;
     }
 
@@ -978,7 +976,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       !Number.isNaN(scoreTeamB);
 
     if (!existingHasScores && !inlineHasScores) {
-      console.warn('Please enter scores for both teams before finishing this match.');
+      alert('Please enter scores for both teams before finishing this match.');
       return;
     }
 
@@ -989,7 +987,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
         division
       );
       if (validationError) {
-        console.warn(validationError);
+        alert(validationError);
         return;
       }
     }
@@ -1065,14 +1063,14 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
     if (freeCourts.length === 0) {
       if (!silent) {
-        console.warn('No free courts available to auto-assign.');
+        alert('No free courts available to auto-assign.');
       }
       return;
     }
 
     if (rawQueue.length === 0) {
       if (!silent) {
-        console.warn('No waiting matches available for auto-assignment.');
+        alert('No waiting matches available for auto-assignment.');
       }
       return;
     }
@@ -1106,7 +1104,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
     if (updates.length === 0) {
       if (!silent) {
-        console.warn(
+        alert(
           'All waiting matches either conflict with players already on court or have already been assigned.'
         );
       }
@@ -1143,7 +1141,7 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
     if (!match) return;
 
     if (!currentUser) {
-      console.warn('You must be logged in to start the match.');
+      alert('You must be logged in to start the match.');
       return;
     }
 
@@ -1155,12 +1153,12 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
       teamB?.players?.includes(currentUser.uid);
 
     if (!isOnTeam && !isOrganizer) {
-      console.warn('Only players in this match (or organisers) can start the match.');
+      alert('Only players in this match (or organisers) can start the match.');
       return;
     }
 
     if (!match.court) {
-      console.warn('This match has not been assigned to a court yet.');
+      alert('This match has not been assigned to a court yet.');
       return;
     }
 
@@ -1229,27 +1227,36 @@ export const TournamentManager: React.FC<TournamentManagerProps> = ({
 
       {/* Division Selector */}
       <div className="mb-6">
-        <label htmlFor="division-select" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-          Select Division
-        </label>
-        <div className="relative">
+        {/* Mobile Dropdown */}
+        <div className="md:hidden">
+          <label htmlFor="division-select" className="sr-only">Select Division</label>
           <select
             id="division-select"
             value={activeDivisionId}
             onChange={(e) => setActiveDivisionId(e.target.value)}
-            className="w-full appearance-none bg-gray-800 text-white font-bold border border-gray-700 rounded-lg py-3 px-4 pr-10 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all hover:border-gray-600"
+            className="w-full bg-gray-800 text-white border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-green-500"
           >
             {divisions.map((div) => (
-              <option key={div.id} value={div.id}>
-                {div.name}
-              </option>
+              <option key={div.id} value={div.id}>{div.name}</option>
             ))}
           </select>
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
-            <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-              <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-            </svg>
-          </div>
+        </div>
+
+        {/* Desktop Tabs */}
+        <div className="hidden md:flex overflow-x-auto gap-2 pb-2">
+          {divisions.map(div => (
+            <button
+              key={div.id}
+              onClick={() => setActiveDivisionId(div.id)}
+              className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-bold border transition-colors ${
+                activeDivisionId === div.id
+                  ? 'bg-white text-gray-900 border-white'
+                  : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'
+              }`}
+            >
+              {div.name}
+            </button>
+          ))}
         </div>
       </div>
 

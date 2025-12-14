@@ -1,3 +1,5 @@
+
+
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { 
   type User, 
@@ -9,7 +11,7 @@ import {
   updateProfile,
   updateEmail,
   sendPasswordResetEmail
-} from 'firebase/auth';
+} from '@firebase/auth';
 import { getAuth, createUserProfile, getUserProfile, updateUserProfileDoc } from '../services/firebase';
 import type { UserProfile, UserRole } from '../types';
 
@@ -48,11 +50,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const auth = getAuth();
-    if (!auth) {
-        console.error("Auth not initialized");
-        setLoading(false);
-        return;
-    }
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       
@@ -113,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
   
   // Helper to improve email link clickability on mobile (especially iOS)
+  // FIXED: Removed URL to prevent "Domain not allowlisted" error during development.
   const getActionCodeSettings = () => undefined;
 
   const signup = useCallback(async (email: string, pass: string, role: UserRole, name: string) => {
