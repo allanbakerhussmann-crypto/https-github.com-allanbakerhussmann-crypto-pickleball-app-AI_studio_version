@@ -154,7 +154,9 @@ const LoggedOutWelcome: React.FC<{ onLoginClick: () => void }> = ({ onLoginClick
 };
 
 const App: React.FC = () => {
-    // Check if Firebase is configured BEFORE trying to use auth
+    // ==========================================
+    // FIREBASE CONFIG CHECK (Added for AI Studio)
+    // ==========================================
     const [firebaseReady, setFirebaseReady] = useState(false);
     const [checkingConfig, setCheckingConfig] = useState(true);
     
@@ -170,7 +172,7 @@ const App: React.FC = () => {
     const [isLoginModalOpen, setLoginModalOpen] = useState(false);
     const [isConfigModalOpen, setConfigModalOpen] = useState(false);
     
-    // Views
+    // Views - Expanded for new navigation
     const [view, setView] = useState<string>('dashboard');
     const [activeTournamentId, setActiveTournamentId] = useState<string | null>(null);
     const [activeClubId, setActiveClubId] = useState<string | null>(null);
@@ -192,7 +194,7 @@ const App: React.FC = () => {
     const [tournamentsById, setTournamentsById] = useState<Record<string, Tournament>>({});
     const [usersById, setUsersById] = useState<Record<string, UserProfile>>({});
 
-    // SHOW CONFIG MODAL if Firebase is not ready
+    // Show config modal if not configured
     useEffect(() => {
         if (!checkingConfig && !firebaseReady) {
             console.log('⚠️ Firebase not configured, showing config modal');
@@ -344,6 +346,10 @@ const App: React.FC = () => {
         }
     };
 
+    // ==========================================
+    // LOADING STATES
+    // ==========================================
+    
     // Show loading while checking config
     if (checkingConfig) {
         return (
@@ -413,7 +419,9 @@ const App: React.FC = () => {
 
     const activeTournament = tournaments.find(t => t.id === activeTournamentId);
 
-    // Main Authenticated Layout (rest of your existing JSX)
+    // ==========================================
+    // MAIN AUTHENTICATED LAYOUT
+    // ==========================================
     return (
         <div className="min-h-screen bg-gray-900 flex flex-col font-sans text-gray-100 relative w-full overflow-x-hidden">
             <Header 
@@ -428,6 +436,7 @@ const App: React.FC = () => {
 
             <BottomNav activeView={view} onNavigate={handleNavigate} />
 
+            {/* Partner Invite Popup */}
             {pendingInvites.length > 0 && invitePopupVisible && (
                 <div className="fixed inset-x-0 top-16 z-50 flex justify-center px-4 sm:px-0 pointer-events-none">
                     <div className="pointer-events-auto max-w-xl w-full bg-gray-900 border border-green-500/60 shadow-2xl rounded-xl p-4 sm:p-5 flex flex-col gap-3 animate-fade-in mt-2">
@@ -504,7 +513,9 @@ const App: React.FC = () => {
                 <div className="container mx-auto">
                     {isConfigModalOpen && <FirebaseConfigModal onSave={handleSaveConfig} />}
 
-                    {/* Your existing content switcher - keeping it exactly as is */}
+                    {/* ==========================================
+                        CONTENT SWITCHER - ALL VIEWS
+                        ========================================== */}
                     {activeTournament ? (
                         <TournamentManager 
                             tournament={activeTournament} 
@@ -513,6 +524,30 @@ const App: React.FC = () => {
                             onBack={handleBackToDashboard}
                             initialWizardState={wizardProps}
                             clearWizardState={() => setWizardProps(null)}
+                        />
+                    ) : view === 'createTournament' ? (
+                        isOrganizer ? (
+                            <CreateTournament 
+                                onCreateTournament={handleCreateTournament} 
+                                onCancel={() => setView('tournaments')} 
+                                onCreateClub={() => setView('createClub')}
+                                userId={currentUser.uid}
+                            />
+                        ) : (
+                            <div className="text-center py-20">
+                                <h2 className="text-2xl font-bold text-red-400 mb-2">Access Denied</h2>
+                                <button onClick={() => setView('dashboard')} className="mt-4 text-green-400 hover:underline">Back to Dashboard</button>
+                            </div>
+                        )
+                    ) : view === 'createClub' ? (
+                        <CreateClub 
+                            onClubCreated={() => setView('clubs')}
+                            onCancel={() => setView('clubs')}
+                        />
+                    ) : view === 'clubDetail' && activeClubId ? (
+                        <ClubDetailPage 
+                            clubId={activeClubId} 
+                            onBack={() => { setActiveClubId(null); setView('clubs'); }} 
                         />
                     ) : view === 'dashboard' ? (
                         <UserDashboard 
@@ -525,7 +560,118 @@ const App: React.FC = () => {
                             onEditProfile={() => setView('profile')}
                             onNavigate={handleNavigate}
                         />
+                    ) : view === 'profile' ? (
+                        <Profile onBack={() => setView('dashboard')} />
+                    ) : view === 'adminUsers' && isAppAdmin ? (
+                        <AdminUsersPage onBack={() => setView('dashboard')} />
+                    ) : view === 'meetups' ? (
+                        <MeetupsList 
+                            onCreateClick={() => setView('create_meetup')}
+                            onSelectMeetup={(id) => { setActiveMeetupId(id); setView('meetup_detail'); }}
+                        />
+                    ) : view === 'create_meetup' ? (
+                        <CreateMeetup 
+                            onBack={() => setView('meetups')}
+                            onCreated={() => setView('meetups')}
+                        />
+                    ) : view === 'meetup_detail' && activeMeetupId ? (
+                        <MeetupDetail 
+                            meetupId={activeMeetupId}
+                            onBack={() => { setActiveMeetupId(null); setView('meetups'); }}
+                        />
+                    ) : view === 'tournaments' ? (
+                        <TournamentDashboard 
+                            tournaments={tournaments}
+                            onSelectTournament={setActiveTournamentId}
+                            onCreateTournamentClick={() => { if (isOrganizer) setView('createTournament'); }}
+                            onlyMyEvents={false}
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'myTournaments' ? (
+                        <TournamentDashboard 
+                            tournaments={tournaments}
+                            onSelectTournament={setActiveTournamentId}
+                            onCreateTournamentClick={() => { if (isOrganizer) setView('createTournament'); }}
+                            onlyMyEvents={true}
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'invites' ? (
+                        <PartnerInvites
+                            onAcceptInvites={(tournamentId, divisionIds) => {
+                                setEventSelectionTournamentId(tournamentId);
+                                setEventSelectionPreselectedDivisionIds(divisionIds);
+                                setView('tournamentEvents');
+                            }}
+                            onCompleteWithoutSelection={() => setView('dashboard')}
+                        />
+                    ) : view === 'tournamentEvents' && eventSelectionTournamentId ? (
+                        <TournamentEventSelection
+                            tournamentId={eventSelectionTournamentId}
+                            preselectedDivisionIds={eventSelectionPreselectedDivisionIds}
+                            onBack={() => {
+                                setView('invites');
+                            }}
+                            onContinue={(selectedDivisionIds) => {
+                                if (selectedDivisionIds.length > 0) {
+                                    handleAcceptInvite(eventSelectionTournamentId, selectedDivisionIds[0]);
+                                }
+                            }}
+                        />
+                    ) : view === 'myResults' ? (
+                        <PlaceholderView 
+                            title="My Results" 
+                            icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>}
+                            message="Your personal match history and statistics across all tournaments."
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'results' ? (
+                        <PlaceholderView 
+                            title="Match Results" 
+                            message="View recent match scores and tournament outcomes here soon." 
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'leagues' ? (
+                        <PlaceholderView 
+                            title="Leagues" 
+                            message="Join ladder leagues and season-long competitions." 
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'teamLeagues' ? (
+                        <PlaceholderView 
+                            title="Team Leagues" 
+                            message="Manage team rosters and league fixtures." 
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'clubs' ? (
+                        <ClubsList 
+                            onCreateClub={() => setView('createClub')}
+                            onViewClub={(id) => { setActiveClubId(id); setView('clubDetail'); }}
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'players' ? (
+                        <PlayerDirectory onBack={() => setView('dashboard')} />
+                    ) : view === 'myLeagues' ? (
+                        <PlaceholderView 
+                            title="My Leagues" 
+                            icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>}
+                            message="Join ladder leagues and season-long competitions." 
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'myTeamLeagues' ? (
+                        <PlaceholderView 
+                            title="My Team Leagues" 
+                            icon={<svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>}
+                            message="Manage team rosters and league fixtures." 
+                            onBack={() => setView('dashboard')}
+                        />
+                    ) : view === 'myClub' ? (
+                        <ClubsList 
+                            onCreateClub={() => setView('createClub')}
+                            onViewClub={(id) => { setActiveClubId(id); setView('clubDetail'); }}
+                            onBack={() => setView('dashboard')}
+                        />
                     ) : (
+                        // Fallback
                         <UserDashboard 
                             userProfile={userProfile || {
                                 id: currentUser.uid, 
