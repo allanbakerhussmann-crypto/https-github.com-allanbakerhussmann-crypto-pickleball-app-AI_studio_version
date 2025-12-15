@@ -1,4 +1,3 @@
-
 // ... (imports)
 import { initializeApp, getApps } from '@firebase/app';
 import { getAuth as getFirebaseAuth, type Auth } from '@firebase/auth';
@@ -29,10 +28,53 @@ import type { Tournament, UserProfile, TournamentRegistration, Team, Division, M
 
 const STORAGE_KEY = 'pickleball_firebase_config';
 
+// ==========================================
+// COOKIE-BASED STORAGE (PERSISTENT IN AI STUDIO)
+// ==========================================
+
+const setCookie = (name: string, value: string, days: number = 365) => {
+    const expires = new Date();
+    expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
+    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
+};
+
+const getCookie = (name: string): string | null => {
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) {
+            return decodeURIComponent(c.substring(nameEQ.length, c.length));
+        }
+    }
+    return null;
+};
+
+const deleteCookie = (name: string) => {
+    document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+};
+
+// ==========================================
+// CONFIG RETRIEVAL WITH COOKIE FALLBACK
+// ==========================================
+
 const getStoredConfig = () => {
     try {
+        // Try cookie first (persistent in AI Studio)
+        const cookieConfig = getCookie(STORAGE_KEY);
+        if (cookieConfig) {
+            return JSON.parse(cookieConfig);
+        }
+        
+        // Fallback to localStorage (for compatibility)
         const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) return JSON.parse(stored);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            // Migrate to cookie
+            setCookie(STORAGE_KEY, stored);
+            return parsed;
+        }
     } catch (e) {
         console.error("Failed to parse stored config", e);
     }
@@ -89,12 +131,13 @@ const getEnvConfig = () => {
     return null;
 };
 
-// Prioritize: LocalStorage > Environment Vars
+// Prioritize: Cookie > LocalStorage > Environment Vars
 const firebaseConfig = getStoredConfig() || getEnvConfig();
 
-console.log('🔥 Firebase ENV CHECK', {
+console.log('🔥 Firebase CONFIG CHECK', {
   hasStoredConfig: !!getStoredConfig(),
   hasEnvConfig: !!getEnvConfig(),
+  configSource: getStoredConfig() ? 'cookie/localStorage' : (getEnvConfig() ? 'env' : 'none'),
   firebaseConfig,
 });
 
@@ -354,14 +397,21 @@ export const ensureTeamExists = async (
 export const saveFirebaseConfig = (configJson: string) => {
     try {
         const parsed = JSON.parse(configJson);
-        if (!parsed.apiKey || !parsed.authDomain || !parsed.projectId) return { success: false, error: 'Invalid config. Missing apiKey, authDomain, or projectId.' };
+        if (!parsed.apiKey || !parsed.authDomain || !parsed.projectId) {
+            return { success: false, error: 'Invalid config. Missing apiKey, authDomain, or projectId.' };
+        }
+        
+        // Store in BOTH cookie (persistent) AND localStorage (for compatibility)
+        setCookie(STORAGE_KEY, configJson, 365); // Store for 1 year
         localStorage.setItem(STORAGE_KEY, configJson);
+        
         window.location.reload();
         return { success: true };
     } catch (e) {
         return { success: false, error: 'Invalid JSON' };
     }
 };
+
 export const hasCustomConfig = () => !!getStoredConfig() || !!getEnvConfig();
 
 export const isFirebaseConfigured = () => {
